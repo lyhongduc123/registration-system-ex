@@ -1,9 +1,13 @@
 plugins {
-    id("java")
+    id("application")
 }
 
 group = "org.lhduc.registration"
 version = "1.0-SNAPSHOT"
+
+application {
+    mainClass.set("org.lhduc.registration.Main")
+}
 
 repositories {
     mavenCentral()
