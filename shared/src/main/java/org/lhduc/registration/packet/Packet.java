@@ -1,18 +1,13 @@
 package org.lhduc.registration.packet;
 
-import org.lhduc.registration.protocol.MessageType;
-
-import java.time.Instant;
-import java.util.UUID;
-
 public abstract class Packet {
-    private final Header header;
+    private final PacketHeader header;
 
-    protected Packet(Header header) {
+    protected Packet(PacketHeader header) {
         this.header = header;
     }
 
-    public Header getHeader() {
+    public PacketHeader getHeader() {
         return header;
     }
 }

@@ -1,6 +1,6 @@
 package org.lhduc.registration.dispatcher;
 
-import com.sun.jdi.connect.spi.Connection;
+import org.lhduc.registration.network.Connection;
 import org.lhduc.registration.packet.Packet;
 import org.lhduc.registration.packet.PacketHandler;
 import org.lhduc.registration.protocol.MessageType;
@@ -24,6 +24,10 @@ public class PacketDispatcher {
 
         PacketHandler handler =
                 handlers.get(packet.getHeader().getType());
+
+        if (handler == null) {
+            throw new IllegalArgumentException("No handler for type: " + packet.getHeader().getType());
+        }
 
         handler.handle(conn, packet);
     }

@@ -5,24 +5,13 @@ import lombok.Setter;
 
 @Getter
 @Setter
-public final class RegisterPacket extends Packet {
-    private int port;
-    private String credential;
-    private String host;
-    private String group;
+public class RegisterPacket extends Packet {
+    private String clientId;
+    private byte[] authHash;
 
-    public RegisterPacket(
-            Header header,
-            int port,
-            String credential,
-            String host,
-            String group
-    ) {
+    public RegisterPacket(PacketHeader header, String clientId, byte[] authHash) {
         super(header);
-
-        this.port = port;
-        this.credential = credential;
-        this.host = host;
-        this.group = group;
+        this.clientId = clientId;
+        this.authHash = authHash;
     }
 }

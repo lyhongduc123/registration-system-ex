@@ -1,5 +1,6 @@
 package org.lhduc.registration.codec.serialize;
 
+import org.lhduc.registration.packet.PacketHeader;
 import org.lhduc.registration.packet.Packet;
 import org.lhduc.registration.protocol.MessageType;
 
@@ -11,5 +12,5 @@ public interface PacketSerializer<T extends Packet> {
     MessageType type();
 
     void write(OutputStream out, T packet) throws IOException;
-    T read(InputStream in) throws IOException;
+    T read(InputStream in, PacketHeader header) throws IOException;
 }
