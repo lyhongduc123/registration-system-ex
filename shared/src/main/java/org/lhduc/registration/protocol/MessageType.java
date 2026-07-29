@@ -10,6 +10,8 @@ public enum MessageType {
     RENEW(3),
     RENEW_ACK(4),
     SUCCESS(5),
+    DEREGISTER(6),
+    ACK(7),
     ERROR(-1);
 
     private final int value;

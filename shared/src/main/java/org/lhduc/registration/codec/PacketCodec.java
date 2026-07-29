@@ -50,7 +50,7 @@ public class PacketCodec {
 
     private PacketHeader readHeader(DataInputStream dataInputStream) throws IOException {
         MessageType type =
-                MessageType.fromValue(dataInputStream.readUnsignedByte());
+                MessageType.fromValue(dataInputStream.readByte());
         int length = dataInputStream.readInt();
         UUID requestId = new UUID(
                 dataInputStream.readLong(),

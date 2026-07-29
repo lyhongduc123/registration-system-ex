@@ -17,4 +17,5 @@ public class ServerConfig {
     private final int maxRetry;
     private final int clientCount;
     private final String secret;
+    private final int backlog;
 }

@@ -15,6 +15,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Slf4j
 public class ClientSimulator {
 
+    public enum Mode {
+        LOAD,
+        STRESS
+    }
+
     private final ClientConfig config;
     private final List<ClientService> clients;
     private final AtomicInteger successCount;
@@ -28,73 +33,112 @@ public class ClientSimulator {
     }
 
     public void start() throws InterruptedException {
+        start(Mode.STRESS);
+    }
+
+    public void start(Mode mode) throws InterruptedException {
+        switch (mode) {
+            case LOAD -> startLoadTest();
+            case STRESS -> startStressTest();
+        }
+    }
+
+    private void startLoadTest() throws InterruptedException {
         int totalClients = config.getClientNumber();
-        ExecutorService executor = Executors.newFixedThreadPool(
-                Math.min(totalClients, Runtime.getRuntime().availableProcessors() * 2)
-        );
+        int rps = config.getRequestPerSecond();
+        ExecutorService executor = Executors.newCachedThreadPool();
         CountDownLatch latch = new CountDownLatch(totalClients);
 
-        log.info("Starting simulation: {} clients at {} rps, lease={}s, renewBefore={}s",
-                totalClients, config.getRequestPerSecond(),
+        log.info("Load test: {} clients at {} rps, lease={}s, renewBefore={}s",
+                totalClients, rps,
                 config.getLeaseDuration().getSeconds(), config.getRenewBefore());
 
-        long intervalMs = 1000L / config.getRequestPerSecond();
+        for (int i = 0; i < totalClients; i += rps) {
+            int batchEnd = Math.min(i + rps, totalClients);
+            long batchStart = System.currentTimeMillis();
 
-        for (int i = 0; i < totalClients; i++) {
-            UUID clientId = deterministicId(i);
-            ClientService client;
-            try {
-                client = new ClientService(
-                        clientId,
-                        config.getSecret(),
-                        "localhost",
-                        config.getServerPort(),
-                        config.getMaxRetry(),
-                        config.getLeaseDuration(),
-                        config.getRenewBefore()
-                );
-                clients.add(client);
-            } catch (Exception e) {
-                log.error("Failed to create client {}: {}", clientId, e.getMessage());
-                failCount.incrementAndGet();
-                latch.countDown();
-                continue;
+            for (int j = i; j < batchEnd; j++) {
+                UUID clientId = deterministicId(j);
+                launchClient(executor, latch, clientId);
             }
 
-            ClientService finalClient = client;
-            executor.submit(() -> {
-                try {
-                    finalClient.run();
-                    successCount.incrementAndGet();
-                } catch (Exception e) {
-                    failCount.incrementAndGet();
-                } finally {
-                    latch.countDown();
-                }
-            });
-
-            if (intervalMs > 0 && i < totalClients - 1) {
-                Thread.sleep(intervalMs);
+            long elapsed = System.currentTimeMillis() - batchStart;
+            long sleepMs = 1000L - elapsed;
+            if (sleepMs > 0 && batchEnd < totalClients) {
+                Thread.sleep(sleepMs);
             }
         }
 
-        log.info("All {} clients started. Waiting for registration...", totalClients);
-        latch.await(30, TimeUnit.SECONDS);
-        log.info("Registration complete: {} succeeded, {} failed out of {}",
-                successCount.get(), failCount.get(), totalClients);
+        waitForCompletion(latch, totalClients);
     }
 
-    public void await(long duration, TimeUnit unit) throws InterruptedException {
-        log.info("Simulation running for {}{}...", duration, unit);
-        Thread.sleep(unit.toMillis(duration));
+    private void startStressTest() throws InterruptedException {
+        int totalClients = config.getClientNumber();
+        ExecutorService executor = Executors.newCachedThreadPool();
+        CountDownLatch latch = new CountDownLatch(totalClients);
+
+        log.info("Stress test: {} clients submitted simultaneously, lease={}s",
+                totalClients, config.getLeaseDuration().getSeconds());
+
+        for (int i = 0; i < totalClients; i++) {
+            UUID clientId = deterministicId(i);
+            launchClient(executor, latch, clientId);
+        }
+
+        waitForCompletion(latch, totalClients);
+    }
+
+    private boolean launchClient(ExecutorService executor, CountDownLatch latch, UUID clientId) {
+        ClientService client = new ClientService(
+                clientId,
+                config.getSecret(),
+                "localhost",
+                config.getServerPort(),
+                config.getMaxRetry(),
+                config.getLeaseDuration(),
+                config.getRenewBefore()
+        );
+        clients.add(client);
+
+        executor.submit(() -> {
+            try {
+                client.register();
+                successCount.incrementAndGet();
+            } catch (Exception e) {
+                log.warn("Client {} failed: {}", clientId, e.getMessage());
+                failCount.incrementAndGet();
+            } finally {
+                latch.countDown();
+            }
+        });
+        return true;
+    }
+
+    private void waitForCompletion(CountDownLatch latch, int totalClients) throws InterruptedException {
+        long totalWait = 120_000L;
+        boolean allDone = latch.await(totalWait, TimeUnit.MILLISECONDS);
+        if (allDone) {
+            log.info("All done: {} succeeded, {} failed", successCount.get(), failCount.get());
+        } else {
+            log.warn("Timed out after {}s: {} succeeded, {} failed out of {}",
+                    totalWait / 1000, successCount.get(), failCount.get(), totalClients);
+        }
+        stop();
     }
 
     public static UUID deterministicId(int index) {
         return new UUID(0, index + 1);
     }
 
+    public int getSuccessCount() {
+        return successCount.get();
+    }
+
+    public int getFailCount() {
+        return failCount.get();
+    }
+
     public void stop() {
-        clients.forEach(ClientService::stop);
         log.info("Simulation stopped. Final stats: {} succeeded, {} failed",
                 successCount.get(), failCount.get());
     }

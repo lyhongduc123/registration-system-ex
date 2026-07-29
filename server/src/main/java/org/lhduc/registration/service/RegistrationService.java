@@ -1,6 +1,7 @@
 package org.lhduc.registration.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.lhduc.registration.config.ServerConfig;
 import org.lhduc.registration.crypto.HmacUtil;
 import org.lhduc.registration.models.Challenge;
@@ -15,6 +16,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.UUID;
 
+@Slf4j
 @RequiredArgsConstructor
 public class RegistrationService {
 
@@ -29,12 +31,18 @@ public class RegistrationService {
     public Challenge initiateRegistration(UUID clientId) {
         ClientCredential credential = registrationRepository.get(clientId);
         if (credential == null) {
-            throw new IllegalArgumentException("Unknown client: " + clientId);
+            credential = new ClientCredential(clientId, 0, "localhost", "dynamic", config.getSecret());
+            registrationRepository.add(credential);
         }
 
         ClientSession existing = sessionRepository.get(clientId);
         if (existing != null && existing.getStatus() == SessionStatus.ACTIVE) {
             throw new IllegalStateException("Client already registered: " + clientId);
+        }
+
+        Challenge existingChallenge = challengeRepository.acquireForClient(clientId, config.getChallengeTimeout());
+        if (existingChallenge != null) {
+            return existingChallenge;
         }
 
         byte[] nonce = new byte[NONCE_SIZE];
@@ -52,24 +60,23 @@ public class RegistrationService {
     }
 
     public ClientSession completeRegistration(UUID challengeId, UUID clientId, byte[] responseHash) {
-        if (!challengeRepository.isChallengeValid(challengeId)) {
+        Challenge challenge = challengeRepository.validateAndMarkUsed(challengeId);
+        if (challenge == null) {
             throw new IllegalStateException("Invalid or expired challenge: " + challengeId);
         }
 
-        Challenge challenge = challengeRepository.getByChallengeId(challengeId);
+        if (!challenge.getClientId().equals(clientId)) {
+            throw new IllegalArgumentException("ClientId mismatch for challenge: " + challengeId);
+        }
 
         ClientCredential credential = registrationRepository.get(clientId);
         if (credential == null) {
-            challengeRepository.invalidateChallenge(challengeId);
             throw new IllegalArgumentException("Unknown client: " + clientId);
         }
 
         if (!HmacUtil.verify(credential.getClientSecret(), challenge.getNonce(), responseHash)) {
-            challengeRepository.invalidateChallenge(challengeId);
             throw new SecurityException("Authentication failed for client: " + clientId);
         }
-
-        challengeRepository.invalidateChallenge(challengeId);
 
         Instant now = Instant.now();
         ClientSession session = ClientSession.builder()
@@ -85,6 +92,25 @@ public class RegistrationService {
     }
 
     public ClientSession renew(UUID clientId, UUID sessionId) {
+        Instant now = Instant.now();
+        ClientSession[] result = new ClientSession[1];
+        sessionRepository.computeIfPresent(clientId, session -> {
+            if (session.getStatus() == SessionStatus.ACTIVE
+                    && !session.getExpiredAt().isBefore(now)
+                    && session.getSessionId().equals(sessionId)) {
+                session.setExpiredAt(now.plus(config.getLeaseDuration()));
+                session.setRegisteredAt(now);
+                result[0] = session;
+            }
+            return session;
+        });
+        if (result[0] == null) {
+            throw new IllegalStateException("No active session for client: " + clientId);
+        }
+        return result[0];
+    }
+
+    public void deregister(UUID clientId, UUID sessionId) {
         ClientSession session = sessionRepository.get(clientId);
         if (session == null || session.getStatus() != SessionStatus.ACTIVE) {
             throw new IllegalStateException("No active session for client: " + clientId);
@@ -92,19 +118,30 @@ public class RegistrationService {
         if (!session.getSessionId().equals(sessionId)) {
             throw new SecurityException("SessionId mismatch for client: " + clientId);
         }
-
-        Instant now = Instant.now();
-        session.setExpiredAt(now.plus(config.getLeaseDuration()));
-        session.setRegisteredAt(now);
-        return session;
-    }
-
-    public void deregister(UUID clientId) {
-        ClientSession session = sessionRepository.get(clientId);
-        if (session != null) {
-            session.setStatus(SessionStatus.CANCELLED);
-        }
+        session.setStatus(SessionStatus.CANCELLED);
         registrationRepository.delete(clientId);
         sessionRepository.delete(clientId);
+    }
+
+    public int cleanup() {
+        int expired = 0;
+        Instant now = Instant.now();
+        for (ClientSession session : sessionRepository.getAll()) {
+            boolean removed = sessionRepository.computeIfPresent(session.getClientId(), s -> {
+                if (s.getStatus() == SessionStatus.ACTIVE && s.getExpiredAt().isBefore(now)) {
+                    return null;
+                }
+                return s;
+            }) == null;
+            if (removed) {
+                expired++;
+                log.debug("Session {} for client {} expired", session.getSessionId(), session.getClientId());
+                registrationRepository.delete(session.getClientId());
+            }
+        }
+        if (expired > 0) {
+            log.info("Expired {} sessions", expired);
+        }
+        return expired;
     }
 }

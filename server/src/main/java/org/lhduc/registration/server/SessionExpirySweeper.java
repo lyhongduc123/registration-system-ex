@@ -1,12 +1,9 @@
 package org.lhduc.registration.server;
 
 import lombok.extern.slf4j.Slf4j;
-import org.lhduc.registration.models.ClientSession;
-import org.lhduc.registration.models.SessionStatus;
-import org.lhduc.registration.repository.SessionRepository;
+import org.lhduc.registration.service.RegistrationService;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -14,12 +11,12 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class SessionExpirySweeper {
 
-    private final SessionRepository sessionRepository;
+    private final RegistrationService registrationService;
     private final Duration interval;
     private final ScheduledExecutorService scheduler;
 
-    public SessionExpirySweeper(SessionRepository sessionRepository, Duration interval) {
-        this.sessionRepository = sessionRepository;
+    public SessionExpirySweeper(RegistrationService registrationService, Duration interval) {
+        this.registrationService = registrationService;
         this.interval = interval;
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "session-expiry-sweeper");
@@ -38,16 +35,6 @@ public class SessionExpirySweeper {
     }
 
     private void sweep() {
-        int expired = 0;
-        for (ClientSession session : sessionRepository.getAll()) {
-            if (session.getStatus() == SessionStatus.ACTIVE && session.getExpiredAt().isBefore(Instant.now())) {
-                session.setStatus(SessionStatus.EXPIRED);
-                expired++;
-                log.debug("Session {} for client {} expired", session.getSessionId(), session.getClientId());
-            }
-        }
-        if (expired > 0) {
-            log.info("Expired {} sessions", expired);
-        }
+        registrationService.cleanup();
     }
 }

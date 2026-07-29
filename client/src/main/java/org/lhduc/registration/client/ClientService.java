@@ -2,8 +2,10 @@ package org.lhduc.registration.client;
 
 import lombok.extern.slf4j.Slf4j;
 import org.lhduc.registration.codec.PacketCodec;
+import org.lhduc.registration.codec.serialize.AckSerializer;
 import org.lhduc.registration.codec.serialize.ChallengeResponseSerializer;
 import org.lhduc.registration.codec.serialize.ChallengeSerializer;
+import org.lhduc.registration.codec.serialize.DeregisterSerializer;
 import org.lhduc.registration.codec.serialize.ErrorSerializer;
 import org.lhduc.registration.codec.serialize.RegisterSerializer;
 import org.lhduc.registration.codec.serialize.RenewAckSerializer;
@@ -13,6 +15,7 @@ import org.lhduc.registration.crypto.HmacUtil;
 import org.lhduc.registration.network.Connection;
 import org.lhduc.registration.packet.ChallengePacket;
 import org.lhduc.registration.packet.ChallengeResponsePacket;
+import org.lhduc.registration.packet.DeregisterPacket;
 import org.lhduc.registration.packet.ErrorPacket;
 import org.lhduc.registration.packet.Packet;
 import org.lhduc.registration.packet.PacketHeader;
@@ -30,11 +33,12 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Slf4j
-public class ClientService implements Runnable {
+public class ClientService {
 
     private final UUID clientId;
     private final String secret;
-    private final Connection connection;
+    private final String host;
+    private final int port;
     private final int maxRetry;
     private final int renewBeforeSeconds;
     private final Duration leaseDuration;
@@ -42,17 +46,16 @@ public class ClientService implements Runnable {
     private UUID sessionId;
     private Instant leaseExpiry;
     private volatile boolean registered;
-    private volatile boolean running;
 
     public ClientService(UUID clientId, String secret, String host, int port,
-                         int maxRetry, Duration leaseDuration, int renewBeforeSeconds) throws IOException {
+                         int maxRetry, Duration leaseDuration, int renewBeforeSeconds) {
         this.clientId = clientId;
         this.secret = secret;
+        this.host = host;
+        this.port = port;
         this.maxRetry = maxRetry;
         this.leaseDuration = leaseDuration;
         this.renewBeforeSeconds = renewBeforeSeconds;
-        this.connection = new Connection(new Socket(host, port), createCodec());
-        this.running = true;
     }
 
     private static PacketCodec createCodec() {
@@ -63,69 +66,59 @@ public class ClientService implements Runnable {
         codec.registerSerializer(MessageType.RENEW, new RenewSerializer());
         codec.registerSerializer(MessageType.RENEW_ACK, new RenewAckSerializer());
         codec.registerSerializer(MessageType.SUCCESS, new SuccessSerializer());
+        codec.registerSerializer(MessageType.DEREGISTER, new DeregisterSerializer());
+        codec.registerSerializer(MessageType.ACK, new AckSerializer());
         codec.registerSerializer(MessageType.ERROR, new ErrorSerializer());
         return codec;
     }
 
-    @Override
-    public void run() {
-        try {
-            registerWithRetry();
-            if (registered) {
-                renewLoop();
-            }
-        } catch (Exception e) {
-            log.error("Client {} failed: {}", clientId, e.getMessage());
-        } finally {
-            close();
-        }
-    }
-
-    private void registerWithRetry() {
+    public void register() throws IOException {
         for (int attempt = 1; attempt <= maxRetry; attempt++) {
             try {
                 doRegister();
                 registered = true;
-                log.info("Client {} registered successfully (session={})", clientId, sessionId);
+                log.debug("Client {} registered (session={})", clientId, sessionId);
                 return;
             } catch (Exception e) {
                 log.warn("Client {} register attempt {}/{} failed: {}",
                         clientId, attempt, maxRetry, e.getMessage());
                 if (attempt < maxRetry) {
-                    sleep(1000);
+                    sleep(5000 * attempt);
                 }
             }
         }
-        log.error("Client {} failed to register after {} attempts", clientId, maxRetry);
+        throw new IOException("Client " + clientId + " failed to register after " + maxRetry + " attempts");
     }
 
     private void doRegister() throws IOException {
-        byte[] authHash = HmacUtil.compute(secret, clientId.toString().getBytes());
-        RegisterPacket registerPacket = new RegisterPacket(
-                PacketHeader.builder()
-                        .type(MessageType.REGISTER)
-                        .requestId(UUID.randomUUID())
-                        .timestamp(Instant.now())
-                        .version(1)
-                        .build(),
-                clientId.toString(),
-                authHash
-        );
+        try (Connection connection = new Connection(new Socket(host, port), createCodec())) {
+            byte[] authHash = HmacUtil.compute(secret, clientId.toString().getBytes());
+            RegisterPacket registerPacket = new RegisterPacket(
+                    PacketHeader.builder()
+                            .type(MessageType.REGISTER)
+                            .requestId(UUID.randomUUID())
+                            .timestamp(Instant.now())
+                            .version(1)
+                            .build(),
+                    clientId.toString(),
+                    authHash
+            );
 
-        connection.send(registerPacket);
-        Packet response = connection.readPacket();
+            connection.send(registerPacket);
+            Packet response = connection.readPacket();
 
-        switch (response.getHeader().getType()) {
-            case CHALLENGE -> handleChallenge((ChallengePacket) response);
-            case ERROR -> {
-                ErrorPacket error = (ErrorPacket) response;
-                throw new IOException("Register rejected: " + error.getStatusCode() + " - " + error.getMessage());
+            switch (response.getHeader().getType()) {
+                case CHALLENGE -> handleChallenge(connection, (ChallengePacket) response);
+                case ERROR -> {
+                    ErrorPacket error = (ErrorPacket) response;
+                    throw new IOException("Register rejected: " + error.getStatusCode() + " - " + error.getMessage());
+                }
+                default -> throw new IOException("Unexpected response type: " + response.getHeader().getType());
             }
-            default -> throw new IOException("Unexpected response type: " + response.getHeader().getType());
         }
     }
 
-    private void handleChallenge(ChallengePacket challengePacket) throws IOException {
+    private void handleChallenge(Connection connection, ChallengePacket challengePacket) throws IOException {
         byte[] responseHash = HmacUtil.compute(secret, challengePacket.getNonce());
 
         ChallengeResponsePacket responsePacket = new ChallengeResponsePacket(
@@ -157,68 +150,76 @@ public class ClientService implements Runnable {
         }
     }
 
-    private void renewLoop() {
-        while (running && registered) {
-            try {
-                long secsUntilExpiry = Duration.between(Instant.now(), leaseExpiry).getSeconds();
-                if (secsUntilExpiry <= renewBeforeSeconds) {
-                    doRenew();
+    public void renew() throws IOException {
+        if (!registered || sessionId == null) {
+            throw new IllegalStateException("Client not registered: " + clientId);
+        }
+
+        try (Connection connection = new Connection(new Socket(host, port), createCodec())) {
+            RenewPacket renewPacket = new RenewPacket(
+                    PacketHeader.builder()
+                            .type(MessageType.RENEW)
+                            .requestId(UUID.randomUUID())
+                            .timestamp(Instant.now())
+                            .version(1)
+                            .build(),
+                    clientId.toString(),
+                    sessionId
+            );
+
+            connection.send(renewPacket);
+            Packet response = connection.readPacket();
+
+            switch (response.getHeader().getType()) {
+                case RENEW_ACK -> {
+                    RenewAckPacket ack = (RenewAckPacket) response;
+                    if (ack.getStatusCode() == StatusCode.SUCCESS) {
+                        this.leaseExpiry = ack.getNewLeaseExpiry();
+                        log.debug("Client {} renewed, lease expiry {}", clientId, leaseExpiry);
+                    } else {
+                        throw new IOException("Renew rejected: " + ack.getStatusCode());
+                    }
                 }
-                Thread.sleep(1000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            } catch (Exception e) {
-                log.warn("Client {} renew failed: {}", clientId, e.getMessage());
-                if (leaseExpiry != null && Instant.now().isAfter(leaseExpiry)) {
-                    log.warn("Client {} lease expired, re-registering", clientId);
-                    registered = false;
-                    registerWithRetry();
+                case ERROR -> {
+                    ErrorPacket error = (ErrorPacket) response;
+                    throw new IOException("Renew error: " + error.getStatusCode() + " - " + error.getMessage());
                 }
+                default -> throw new IOException("Unexpected response to renew: " + response.getHeader().getType());
             }
         }
     }
 
-    private void doRenew() throws IOException {
-        RenewPacket renewPacket = new RenewPacket(
-                PacketHeader.builder()
-                        .type(MessageType.RENEW)
-                        .requestId(UUID.randomUUID())
-                        .timestamp(Instant.now())
-                        .version(1)
-                        .build(),
-                clientId.toString(),
-                sessionId
-        );
+    public void deregister() throws IOException {
+        if (!registered || sessionId == null) {
+            return;
+        }
 
-        connection.send(renewPacket);
-        Packet response = connection.readPacket();
+        try (Connection connection = new Connection(new Socket(host, port), createCodec())) {
+            DeregisterPacket deregisterPacket = new DeregisterPacket(
+                    PacketHeader.builder()
+                            .type(MessageType.DEREGISTER)
+                            .requestId(UUID.randomUUID())
+                            .timestamp(Instant.now())
+                            .version(1)
+                            .build(),
+                    clientId.toString(),
+                    sessionId
+            );
 
-        switch (response.getHeader().getType()) {
-            case RENEW_ACK -> {
-                RenewAckPacket ack = (RenewAckPacket) response;
-                if (ack.getStatusCode() == StatusCode.SUCCESS) {
-                    this.leaseExpiry = ack.getNewLeaseExpiry();
-                    log.info("Client {} renewed, lease expiry {}", clientId, leaseExpiry);
-                } else {
-                    throw new IOException("Renew rejected: " + ack.getStatusCode());
+            connection.send(deregisterPacket);
+            Packet response = connection.readPacket();
+
+            switch (response.getHeader().getType()) {
+                case ACK -> log.debug("Client {} deregistered", clientId);
+                case ERROR -> {
+                    ErrorPacket error = (ErrorPacket) response;
+                    log.warn("Deregister failed for client {}: {} - {}",
+                            clientId, error.getStatusCode(), error.getMessage());
                 }
+                default -> log.warn("Unexpected deregister response: {}", response.getHeader().getType());
             }
-            case ERROR -> {
-                ErrorPacket error = (ErrorPacket) response;
-                throw new IOException("Renew error: " + error.getStatusCode() + " - " + error.getMessage());
-            }
-            default -> throw new IOException("Unexpected response to renew: " + response.getHeader().getType());
         }
-    }
-
-    private void close() {
-        running = false;
-        try {
-            connection.close();
-        } catch (IOException e) {
-            log.warn("Error closing client {} connection: {}", clientId, e.getMessage());
-        }
+        registered = false;
     }
 
     private static void sleep(long millis) {
@@ -233,11 +234,15 @@ public class ClientService implements Runnable {
         return registered;
     }
 
-    public void stop() {
-        this.running = false;
-    }
-
     public UUID getClientId() {
         return clientId;
+    }
+
+    public UUID getSessionId() {
+        return sessionId;
+    }
+
+    public Instant getLeaseExpiry() {
+        return leaseExpiry;
     }
 }

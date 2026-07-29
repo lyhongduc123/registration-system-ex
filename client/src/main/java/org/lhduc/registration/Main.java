@@ -15,8 +15,7 @@ public class Main {
                 config.getSecret());
 
         ClientSimulator simulator = new ClientSimulator(config);
-        simulator.start();
-
         Runtime.getRuntime().addShutdownHook(new Thread(simulator::stop));
+        simulator.start(ClientSimulator.Mode.STRESS);
     }
 }
