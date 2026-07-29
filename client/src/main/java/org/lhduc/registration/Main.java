@@ -1,17 +1,22 @@
 package org.lhduc.registration;
 
-//TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
-// click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
-public class Main {
-    static void main() {
-        //TIP Press <shortcut actionId="ShowIntentionActions"/> with your caret at the highlighted text
-        // to see how IntelliJ IDEA suggests fixing it.
-        IO.println(String.format("Hello and welcome!"));
+import lombok.extern.slf4j.Slf4j;
+import org.lhduc.registration.client.ClientSimulator;
+import org.lhduc.registration.config.ClientConfig;
+import org.lhduc.registration.config.ConfigLoader;
 
-        for (int i = 1; i <= 5; i++) {
-            //TIP Press <shortcut actionId="Debug"/> to start debugging your code. We have set one <icon src="AllIcons.Debugger.Db_set_breakpoint"/> breakpoint
-            // for you, but you can always add more by pressing <shortcut actionId="ToggleLineBreakpoint"/>.
-            IO.println("i = " + i);
-        }
+@Slf4j
+public class Main {
+    public static void main(String[] args) throws InterruptedException {
+        ClientConfig config = ConfigLoader.load();
+        log.info("Client config loaded: {} clients, {} rps, {}s lease, {}s renewBefore, secret={}",
+                config.getClientNumber(), config.getRequestPerSecond(),
+                config.getLeaseDuration().getSeconds(), config.getRenewBefore(),
+                config.getSecret());
+
+        ClientSimulator simulator = new ClientSimulator(config);
+        simulator.start();
+
+        Runtime.getRuntime().addShutdownHook(new Thread(simulator::stop));
     }
 }
