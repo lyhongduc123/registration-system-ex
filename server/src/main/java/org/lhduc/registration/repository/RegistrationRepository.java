@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import org.lhduc.registration.models.ClientCredential;
 
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,8 +26,8 @@ public class RegistrationRepository {
         return clientCredentials.get(clientId);
     }
 
-    public List<ClientCredential> getAll() {
-        return clientCredentials.values().stream().toList();
+    public Collection<ClientCredential> getAll() {
+        return clientCredentials.values();
     }
 
     public ClientCredential delete(UUID clientId) {

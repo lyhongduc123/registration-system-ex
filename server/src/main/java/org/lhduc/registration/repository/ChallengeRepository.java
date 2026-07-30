@@ -59,4 +59,19 @@ public class ChallengeRepository {
 
         return result;
     }
+
+    public int cleanup() {
+        Instant now = Instant.now();
+        int[] count = new int[1];
+        challenges.entrySet().removeIf(entry -> {
+            Challenge c = entry.getValue();
+            if (c.isUsed() || c.getExpiredAt().isBefore(now)) {
+                clientChallengeIds.remove(c.getClientId(), entry.getKey());
+                count[0]++;
+                return true;
+            }
+            return false;
+        });
+        return count[0];
+    }
 }

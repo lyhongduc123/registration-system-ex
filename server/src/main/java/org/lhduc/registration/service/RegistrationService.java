@@ -123,7 +123,7 @@ public class RegistrationService {
         sessionRepository.delete(clientId);
     }
 
-    public int cleanup() {
+    public void cleanup() {
         int expired = 0;
         Instant now = Instant.now();
         for (ClientSession session : sessionRepository.getAll()) {
@@ -142,6 +142,9 @@ public class RegistrationService {
         if (expired > 0) {
             log.info("Expired {} sessions", expired);
         }
-        return expired;
+        int cleanedChallenges = challengeRepository.cleanup();
+        if (cleanedChallenges > 0) {
+            log.info("Cleaned {} expired/used challenges", cleanedChallenges);
+        }
     }
 }

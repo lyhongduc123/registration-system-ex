@@ -28,6 +28,7 @@ import org.lhduc.registration.protocol.StatusCode;
 
 import java.io.IOException;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
@@ -46,6 +47,10 @@ public class ClientService {
     private UUID sessionId;
     private Instant leaseExpiry;
     private volatile boolean registered;
+
+    private int attemptCount;
+    private long registerDurationNanos;
+    private boolean timedOut;
 
     public ClientService(UUID clientId, String secret, String host, int port,
                          int maxRetry, Duration leaseDuration, int renewBeforeSeconds) {
@@ -73,14 +78,28 @@ public class ClientService {
     }
 
     public void register() throws IOException {
+        attemptCount = 0;
+        timedOut = false;
         for (int attempt = 1; attempt <= maxRetry; attempt++) {
+            attemptCount = attempt;
+            long start = System.nanoTime();
             try {
                 doRegister();
+                registerDurationNanos = System.nanoTime() - start;
                 registered = true;
                 log.debug("Client {} registered (session={})", clientId, sessionId);
                 return;
+            } catch (SocketTimeoutException e) {
+                timedOut = true;
+                registerDurationNanos = System.nanoTime() - start;
+                log.warn("Client {} attempt {}/{} timed out: {}",
+                        clientId, attempt, maxRetry, e.getMessage());
+                if (attempt < maxRetry) {
+                    sleep(5000 * attempt);
+                }
             } catch (Exception e) {
-                log.warn("Client {} register attempt {}/{} failed: {}",
+                registerDurationNanos = System.nanoTime() - start;
+                log.warn("Client {} attempt {}/{} failed: {}",
                         clientId, attempt, maxRetry, e.getMessage());
                 if (attempt < maxRetry) {
                     sleep(5000 * attempt);
@@ -91,7 +110,9 @@ public class ClientService {
     }
 
     private void doRegister() throws IOException {
-        try (Connection connection = new Connection(new Socket(host, port), createCodec())) {
+        Socket socket = new Socket(host, port);
+        socket.setSoTimeout(10000);
+        try (Connection connection = new Connection(socket, createCodec())) {
             byte[] authHash = HmacUtil.compute(secret, clientId.toString().getBytes());
             RegisterPacket registerPacket = new RegisterPacket(
                     PacketHeader.builder()
@@ -155,7 +176,9 @@ public class ClientService {
             throw new IllegalStateException("Client not registered: " + clientId);
         }
 
-        try (Connection connection = new Connection(new Socket(host, port), createCodec())) {
+        Socket renewSocket = new Socket(host, port);
+        renewSocket.setSoTimeout(10000);
+        try (Connection connection = new Connection(renewSocket, createCodec())) {
             RenewPacket renewPacket = new RenewPacket(
                     PacketHeader.builder()
                             .type(MessageType.RENEW)
@@ -194,7 +217,9 @@ public class ClientService {
             return;
         }
 
-        try (Connection connection = new Connection(new Socket(host, port), createCodec())) {
+        Socket deregSocket = new Socket(host, port);
+        deregSocket.setSoTimeout(10000);
+        try (Connection connection = new Connection(deregSocket, createCodec())) {
             DeregisterPacket deregisterPacket = new DeregisterPacket(
                     PacketHeader.builder()
                             .type(MessageType.DEREGISTER)
@@ -244,5 +269,20 @@ public class ClientService {
 
     public Instant getLeaseExpiry() {
         return leaseExpiry;
+    }
+
+    public void close() {
+    }
+
+    public int getAttemptCount() {
+        return attemptCount;
+    }
+
+    public long getRegisterDurationNanos() {
+        return registerDurationNanos;
+    }
+
+    public boolean isTimedOut() {
+        return timedOut;
     }
 }

@@ -2,6 +2,7 @@ package org.lhduc.registration.repository;
 
 import org.lhduc.registration.models.ClientSession;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,8 +21,8 @@ public class SessionRepository {
         return sessions.get(clientId);
     }
 
-    public List<ClientSession> getAll() {
-        return sessions.values().stream().toList();
+    public Collection<ClientSession> getAll() {
+        return sessions.values();
     }
 
     public void delete(UUID clientId) {
