@@ -12,27 +12,27 @@ A TCP-based client registration and session management system with challenge-res
 
 - [Build](#build)
 - [Configuration](#configuration)
-  - [Server](#server)
-  - [Client](#client)
+    - [Server](#server)
+    - [Client](#client)
 - [Run](#run)
-  - [Start the server](#start-the-server)
-  - [Run load/stress tests](#run-loadstress-tests)
+    - [Start the server](#start-the-server)
+    - [Run load/stress tests](#run-loadstress-tests)
 - [Architecture](#architecture)
 - [Protocol and Flow](#protocol-and-flow)
-  - [Wire Format](#wire-format)
-  - [Message Types](#message-types)
-  - [Registration Sequence](#registration-sequence)
-  - [Authentication](#authentication)
-  - [Status Codes](#status-codes)
+    - [Wire Format](#wire-format)
+    - [Message Types](#message-types)
+    - [Registration Sequence](#registration-sequence)
+    - [Authentication](#authentication)
+    - [Status Codes](#status-codes)
 - [Example Log](#example-log)
 - [Common Errors](#common-errors)
 - [Retry, Max Retry \& Timeout Design](#retry-max-retry--timeout-design)
 - [Performance](#performance)
-  - [Stress Test Results](#stress-test-results-10000-clients)
+    - [Stress Test Results](#stress-test-results-10000-clients)
 
 ## Build
 
-JDK 21+ and Gradle (via the included wrapper).
+JDK 17+ and Gradle (via the included wrapper).
 
 ```bash
 ./gradlew build
@@ -40,38 +40,42 @@ JDK 21+ and Gradle (via the included wrapper).
 
 The project has three modules:
 
-| Module   | Path   | Description                              |
-|----------|--------|------------------------------------------|
+| Module   | Path      | Description                                                     |
+|----------|-----------|-----------------------------------------------------------------|
 | `shared` | `/shared` | Protocol definitions, packet codec, network layer, HMAC utility |
-| `server` | `/server` | TCP server, registration/session/lease logic, packet handlers |
-| `client` | `/client` | Client simulator for load and stress testing |
+| `server` | `/server` | TCP server, registration/session/lease logic, packet handlers   |
+| `client` | `/client` | Client simulator for load and stress testing                    |
 
 ## Configuration
 
 Two `.properties` files control the server and client.
 
-### Server (`server/src/main/resources/server.properties`)
+### Server
 
-| Property            | Default            | Description                         |
-|---------------------|--------------------|-------------------------------------|
-| `server.port`       | `8000`             | TCP listen port                     |
-| `server.max-retry`  | `3`                | Max retry attempts per client       |
-| `lease.seconds`     | `60`               | Session lease duration (seconds)    |
-| `challenge.seconds` | `30`               | Challenge timeout (seconds)         |
-| `server.client-count` | `300`            | Expected client count (informational) |
-| `server.secret`     | `defaultSecret`    | Default client secret for auth      |
+`server/src/main/resources/server.properties`
 
-### Client (`client/src/main/resources/client.properties`)
+| Property              | Default         | Description                           |
+|-----------------------|-----------------|---------------------------------------|
+| `server.port`         | `8000`          | TCP listen port                       |
+| `server.max-retry`    | `3`             | Max retry attempts per client         |
+| `lease.seconds`       | `60`            | Session lease duration (seconds)      |
+| `challenge.seconds`   | `30`            | Challenge timeout (seconds)           |
+| `server.client-count` | `300`           | Expected client count (informational) |
+| `server.secret`       | `defaultSecret` | Default client secret for auth        |
 
-| Property              | Default  | Description                              |
-|-----------------------|----------|------------------------------------------|
-| `server.port`         | `8000`   | Server port                              |
-| `client.numbers`      | `10000`  | Number of simulated clients              |
-| `client.rps`          | `2`      | Requests per second (load test mode)     |
-| `client.time-left-to-renew` | `10` | Seconds before expiry to attempt renewal |
-| `client.max-retry`    | `3`      | Max retry attempts                       |
-| `client.secret`       | `defaultSecret` | Shared secret for HMAC           |
-| `lease.seconds`       | `60`     | Must match server value                  |
+### Client
+
+`client/src/main/resources/client.properties`
+
+| Property                    | Default         | Description                              |
+|-----------------------------|-----------------|------------------------------------------|
+| `server.port`               | `8000`          | Server port                              |
+| `client.numbers`            | `10000`         | Number of simulated clients              |
+| `client.rps`                | `2`             | Requests per second (load test mode)     |
+| `client.time-left-to-renew` | `10`            | Seconds before expiry to attempt renewal |
+| `client.max-retry`          | `3`             | Max retry attempts                       |
+| `client.secret`             | `defaultSecret` | Shared secret for HMAC                   |
+| `lease.seconds`             | `60`            | Must match server value                  |
 
 ## Run
 
@@ -89,7 +93,8 @@ The server logs to `logs/server.log` (no console output by default).
 ./gradlew :server:test --tests "org.lhduc.registration.server.LoadTestRunner"
 ```
 
-`LoadTestRunner` runs 6 scenarios: 3 stress (100/500/1000 concurrent clients) and 3 load (100/500/1000 clients at 10/50/100 rps). Each scenario uses a deterministic, non-overlapping ID range. Reports are printed to stdout and logged.
+`LoadTestRunner` runs 6 scenarios: 3 stress (100/500/1000 concurrent clients) and 3 load (100/500/1000 clients at
+10/50/100 rps). Each scenario uses a deterministic, non-overlapping ID range. Reports are printed to stdout and logged.
 
 ## Architecture
 
@@ -100,9 +105,11 @@ Main → Server (TCP accept loop)
          └─ SessionExpirySweeper (cleanup every 5s)
 ```
 
-The **shared** module provides **PacketCodec** (binary serialize/deserialize), **Connection** (Socket wrapper), **HmacUtil** (HMAC-SHA256), and all **Packet** types.
+The **shared** module provides **PacketCodec** (binary serialize/deserialize), **Connection** (Socket wrapper), *
+*HmacUtil** (HMAC-SHA256), and all **Packet** types.
 
-The **server** processes each client in a single thread (one connection, multiple packets). Inbound packets are dispatched to typed handlers. Session expiry and challenge cleanup run on a scheduled timer.
+The **server** processes each client in a single thread (one connection, multiple packets). Inbound packets are
+dispatched to typed handlers. Session expiry and challenge cleanup run on a scheduled timer.
 
 ## Protocol and Flow
 
@@ -114,21 +121,22 @@ Every packet has a fixed-length header on the wire:
 [length:4][version:4][type:4][requestId:16][timestamp:8] + [payload...]
 ```
 
-All integers are **big-endian** (network byte order). `requestId` is a UUID (16 bytes). `timestamp` is epoch milliseconds as a 64-bit signed integer. The payload format depends on the message type.
+All integers are **big-endian** (network byte order). `requestId` is a UUID (16 bytes). `timestamp` is epoch
+milliseconds as a 64-bit signed integer. The payload format depends on the message type.
 
 ### Message Types
 
-| Type               | Direction       | Payload                          |
-|--------------------|-----------------|----------------------------------|
-| `REGISTER` (0)     | Client → Server | clientId (string), authHash (32 bytes) |
-| `CHALLENGE` (1)    | Server → Client | challengeId (UUID), nonce (32 bytes), timeout (long ms) |
+| Type                     | Direction       | Payload                                                        |
+|--------------------------|-----------------|----------------------------------------------------------------|
+| `REGISTER` (0)           | Client → Server | clientId (string), authHash (32 bytes)                         |
+| `CHALLENGE` (1)          | Server → Client | challengeId (UUID), nonce (32 bytes), timeout (long ms)        |
 | `CHALLENGE_RESPONSE` (2) | Client → Server | clientId (string), challengeId (UUID), responseHash (32 bytes) |
-| `RENEW` (3)        | Client → Server | clientId (string), sessionId (UUID) |
-| `RENEW_ACK` (4)    | Server → Client | statusCode (int), newLeaseExpiry (Instant) |
-| `SUCCESS` (5)      | Server → Client | sessionId (UUID), leaseExpiry (Instant) |
-| `DEREGISTER` (6)   | Client → Server | clientId (string), sessionId (UUID) |
-| `ACK` (7)          | Server → Client | (no payload)                     |
-| `ERROR` (-1)       | Server → Client | statusCode (int), message (string) |
+| `RENEW` (3)              | Client → Server | clientId (string), sessionId (UUID)                            |
+| `RENEW_ACK` (4)          | Server → Client | statusCode (int), newLeaseExpiry (Instant)                     |
+| `SUCCESS` (5)            | Server → Client | sessionId (UUID), leaseExpiry (Instant)                        |
+| `DEREGISTER` (6)         | Client → Server | clientId (string), sessionId (UUID)                            |
+| `ACK` (7)                | Server → Client | (no payload)                                                   |
+| `ERROR` (-1)             | Server → Client | statusCode (int), message (string)                             |
 
 ### Registration Sequence
 
@@ -165,15 +173,15 @@ This proves the client knows the shared secret without sending it in plaintext.
 
 ### Status Codes
 
-| Code                   | Value | Meaning                          |
-|------------------------|-------|----------------------------------|
-| `SUCCESS`              | 0     | Operation succeeded              |
-| `UNAUTHORIZED`         | 1     | Invalid clientId or session      |
-| `LEASE_EXPIRED`        | 2     | Session lease has expired        |
-| `INVALID_CHALLENGE`    | 3     | Challenge not found or expired   |
-| `TIMEOUT`              | 4     | Operation timed out              |
-| `RETRY_LIMIT`          | 5     | Max retries exceeded             |
-| `SERVER_ERROR`         | 6     | Internal server error            |
+| Code                | Value | Meaning                        |
+|---------------------|-------|--------------------------------|
+| `SUCCESS`           | 0     | Operation succeeded            |
+| `UNAUTHORIZED`      | 1     | Invalid clientId or session    |
+| `LEASE_EXPIRED`     | 2     | Session lease has expired      |
+| `INVALID_CHALLENGE` | 3     | Challenge not found or expired |
+| `TIMEOUT`           | 4     | Operation timed out            |
+| `RETRY_LIMIT`       | 5     | Max retries exceeded           |
+| `SERVER_ERROR`      | 6     | Internal server error          |
 
 ## Example Log
 
@@ -217,45 +225,50 @@ Total run time:                     4727 ms
 
 ## Common Errors
 
-| Symptom                                  | Likely Cause                                            |
-|------------------------------------------|---------------------------------------------------------|
-| `Missing required property: server.port` | Missing/deleted `server.properties`                     |
-| `Address already in use`                 | Port already occupied                                   |
-| `Invalid or expired challenge`           | Client took too long to respond to CHALLENGE            |
-| `Client already registered`              | Client re-registers without deregistering first         |
-| `Authentication failed`                  | Secret mismatch between client and server               |
-| `SessionId mismatch`                     | Client provided wrong sessionId for deregister          |
-| `No active session for client`           | Session expired or never created                        |
-| `Clients not found / ID collision`       | Multiple test scenarios ran with overlapping IDs        |
+| Symptom                                  | Likely Cause                                     |
+|------------------------------------------|--------------------------------------------------|
+| `Missing required property: server.port` | Missing/deleted `server.properties`              |
+| `Address already in use`                 | Port already occupied                            |
+| `Invalid or expired challenge`           | Client took too long to respond to CHALLENGE     |
+| `Client already registered`              | Client re-registers without deregistering first  |
+| `Authentication failed`                  | Secret mismatch between client and server        |
+| `SessionId mismatch`                     | Client provided wrong sessionId for deregister   |
+| `No active session for client`           | Session expired or never created                 |
+| `Clients not found / ID collision`       | Multiple test scenarios ran with overlapping IDs |
 
 ## Retry, Max Retry & Timeout Design
 
-Each client retries up to `maxRetry` times (default: **3**) with a linear backoff of **5s × attempt_number** between attempts (5s, 10s, ...). If all attempts fail, registration is abandoned with an exception.
+Each client retries up to `maxRetry` times (default: **3**) with a linear backoff of **5s × attempt_number** between
+attempts (5s, 10s, ...). If all attempts fail, registration is abandoned with an exception.
 
-A single TCP `Socket` has a **10s read timeout** set via `socket.setSoTimeout(10000)`. If the server doesn't respond within that window, a `SocketTimeoutException` triggers a retry.
+A single TCP `Socket` has a **10s read timeout** set via `socket.setSoTimeout(10000)`. If the server doesn't respond
+within that window, a `SocketTimeoutException` triggers a retry.
 
-The server enforces a **challenge timeout** (default: **30s**). If the client doesn't respond with `CHALLENGE_RESPONSE` before the challenge expires, the challenge becomes invalid and the client must start over with a new `REGISTER`.
+The server enforces a **challenge timeout** (default: **30s**). If the client doesn't respond with `CHALLENGE_RESPONSE`
+before the challenge expires, the challenge becomes invalid and the client must start over with a new `REGISTER`.
 
-Session leases (default: **60s**) are checked on `RENEW` - expired leases are rejected. A background `SessionExpirySweeper` (every **5s**) evicts expired sessions and used/expired challenges from memory.
+Session leases (default: **60s**) are checked on `RENEW` - expired leases are rejected. A background
+`SessionExpirySweeper` (every **5s**) evicts expired sessions and used/expired challenges from memory.
 
 ## Performance
 
 Measured with VisualVM during stress tests with:
-- 10000 concurrent clients
-- **backlog=50** 
 
-| Metric          | Value              |
-|-----------------|--------------------|
-| CPU max spike   | 5.6%               |
-| Heap memory min | 15 MB              |
-| Heap memory max | 150 MB             |
+- 10000 concurrent clients
+- **backlog=50**
+
+| Metric          | Value  |
+|-----------------|--------|
+| CPU max spike   | 5.6%   |
+| Heap memory min | 15 MB  |
+| Heap memory max | 150 MB |
 
 ### Stress Test Results (10000 clients)
 
-| Run | Procedures | Success | Fail | Timeout | Retries | Avg / Min / Max (ms) | Rate   | Time    |
-|-----|------------|---------|------|---------|---------|----------------------|--------|---------|
-| 1   | 24879      | 7568    | 2432 | 0       | 14879   | 322.8 / 1.1 / 2936.2 | 75.7%  | 20646ms |
-| 2   | 25657      | 4789    | 5211 | 0       | 15657   | 662.5 / 1.2 / 3074.1 | 47.9%  | 22252ms |
-| 3   | 25358      | 9976    | 24   | 0       | 15358   | 88.2 / 0.9 / 2027.3  | 99.8%  | 20140ms |
-| 4   | 23738      | 5215    | 4785 | 0       | 13738   | 104.6 / 1.1 / 1259.8 | 52.2%  | 17868ms |
-| 5   | 23677      | 8272    | 1728 | 0       | 13677   | 39.8 / 1.0 / 631.4   | 82.7%  | 17590ms |
+| Run | Procedures | Success | Fail | Timeout | Retries | Avg / Min / Max (ms) | Rate  | Time    |
+|-----|------------|---------|------|---------|---------|----------------------|-------|---------|
+| 1   | 24879      | 7568    | 2432 | 0       | 14879   | 322.8 / 1.1 / 2936.2 | 75.7% | 20646ms |
+| 2   | 25657      | 4789    | 5211 | 0       | 15657   | 662.5 / 1.2 / 3074.1 | 47.9% | 22252ms |
+| 3   | 25358      | 9976    | 24   | 0       | 15358   | 88.2 / 0.9 / 2027.3  | 99.8% | 20140ms |
+| 4   | 23738      | 5215    | 4785 | 0       | 13738   | 104.6 / 1.1 / 1259.8 | 52.2% | 17868ms |
+| 5   | 23677      | 8272    | 1728 | 0       | 13677   | 39.8 / 1.0 / 631.4   | 82.7% | 17590ms |
